@@ -101,13 +101,23 @@ def api_info():
     })
 
 
-@app.before_request
+_tables_created = False
+
 def create_tables_once():
-    try:
-        db.create_all()
-        logger.info("Database tables created successfully")
-    except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
+    global _tables_created
+    if not _tables_created:
+        try:
+            with app.app_context():
+                db.create_all()
+                logger.info("Database tables created successfully")
+                _tables_created = True
+        except Exception as e:
+            logger.error(f"Error creating database tables: {e}")
+            raise
+
+
+with app.app_context():
+    create_tables_once()
 
 
 if __name__ == '__main__':
