@@ -320,21 +320,20 @@ def main():
     logger.info("Iniciando população do banco de dados da Marketing Cloud API")
     logger.info("=" * 60)
 
-    clear_db = input("Limpar banco de dados existente? (s/N): ").lower().strip()
 
     with app.app_context():
         logger.info("Criando tabelas do banco de dados")
         db.create_all()
 
-        if clear_db == 's':
+        if True:
             clear_database()
 
         try:
-            contact_count = populate_contacts(500)
-            campaign_count = populate_campaigns(50)
-            email_def_count = populate_email_definitions(100)
-            event_count = populate_data_events(2000)
-            asset_count = populate_assets(50)
+            contact_count = populate_contacts(5000)
+            campaign_count = populate_campaigns(500)
+            email_def_count = populate_email_definitions(1000)
+            event_count = populate_data_events(20000)
+            asset_count = populate_assets(500)
 
             update_campaign_statistics()
 

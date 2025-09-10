@@ -41,9 +41,7 @@ services:
       retries: 5
 
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: flask-api:first
     container_name: marketing_cloud_api
     restart: unless-stopped
     env_file:
@@ -103,7 +101,6 @@ services:
     profiles:
       - tools
 
-  # Nginx para proxy reverso (produção)
   nginx:
     image: nginx:alpine
     container_name: marketing_cloud_nginx
@@ -132,6 +129,3 @@ volumes:
 networks:
   marketing_cloud_network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
