@@ -2,6 +2,7 @@ import json
 import os
 import random
 import sys
+import logging
 
 from faker import Faker
 
@@ -13,12 +14,23 @@ from models.models import (
     populate_fake_contacts, populate_fake_campaigns, populate_fake_email_definitions
 )
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('populate_db.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 fake = Faker(['pt_BR', 'en_US'])
 Faker.seed(42)
 
 
 def clear_database():
-    print("🗑️  Limpando banco de dados...")
+    logger.info("Limpando banco de dados")
 
     try:
         DataEvent.query.delete()
@@ -28,66 +40,61 @@ def clear_database():
         Contact.query.delete()
 
         db.session.commit()
-        print("✅ Banco de dados limpo com sucesso!")
+        logger.info("Banco de dados limpo com sucesso")
 
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Erro ao limpar banco: {e}")
+        logger.error(f"Erro ao limpar banco: {e}")
         raise
 
 
 def populate_contacts(count=500):
-    """Popular contatos usando a função do modelo"""
-    print(f"👥 Criando {count} contatos...")
+    logger.info(f"Criando {count} contatos")
 
     try:
         created = populate_fake_contacts(count)
-        print(f"✅ {created} contatos criados com sucesso!")
+        logger.info(f"{created} contatos criados com sucesso")
         return created
     except Exception as e:
-        print(f"❌ Erro ao criar contatos: {e}")
+        logger.error(f"Erro ao criar contatos: {e}")
         raise
 
 
 def populate_campaigns(count=50):
-    print(f"📧 Criando {count} campanhas...")
+    logger.info(f"Criando {count} campanhas")
 
     try:
         created = populate_fake_campaigns(count)
-        print(f"✅ {created} campanhas criadas com sucesso!")
+        logger.info(f"{created} campanhas criadas com sucesso")
         return created
     except Exception as e:
-        print(f"❌ Erro ao criar campanhas: {e}")
+        logger.error(f"Erro ao criar campanhas: {e}")
         raise
 
 
 def populate_email_definitions(count=100):
-    """Popular definições de email usando a função do modelo"""
-    print(f"📝 Criando {count} definições de email...")
+    logger.info(f"Criando {count} definições de email")
 
     try:
         created = populate_fake_email_definitions(count)
-        print(f"✅ {created} definições de email criadas com sucesso!")
+        logger.info(f"{created} definições de email criadas com sucesso")
         return created
     except Exception as e:
-        print(f"❌ Erro ao criar definições de email: {e}")
+        logger.error(f"Erro ao criar definições de email: {e}")
         raise
 
 
 def populate_data_events(count=2000):
-    """Popular eventos de dados"""
-    print(f"📊 Criando {count} eventos de dados...")
+    logger.info(f"Criando {count} eventos de dados")
 
     try:
-        # Buscar contatos existentes para associar eventos
         contacts = Contact.query.all()
         if not contacts:
-            print("⚠️  Nenhum contato encontrado. Criando eventos sem contatos associados.")
+            logger.warning("Nenhum contato encontrado. Criando eventos sem contatos associados")
             contact_keys = [f"contact_{i}" for i in range(100)]
         else:
             contact_keys = [c.contact_key for c in contacts]
 
-        # Buscar campanhas e definições de email
         campaigns = Campaign.query.all()
         email_definitions = EmailDefinition.query.all()
 
@@ -98,11 +105,9 @@ def populate_data_events(count=2000):
         sources = ['Email', 'Website', 'Mobile App', 'SMS', 'API']
 
         for _ in range(count):
-            # Gerar evento
             event_type = random.choice(list(DataEventType))
             contact_key = random.choice(contact_keys)
 
-            # Dados específicos do evento baseado no tipo
             event_data = {}
 
             if event_type == DataEventType.EMAIL_OPEN:
@@ -168,20 +173,19 @@ def populate_data_events(count=2000):
             batch = events[i:i + batch_size]
             db.session.bulk_save_objects(batch)
             db.session.commit()
-            print(f"📊 Inseridos {min(i + batch_size, len(events))}/{len(events)} eventos...")
+            logger.info(f"Inseridos {min(i + batch_size, len(events))}/{len(events)} eventos")
 
-        print(f"✅ {len(events)} eventos de dados criados com sucesso!")
+        logger.info(f"{len(events)} eventos de dados criados com sucesso")
         return len(events)
 
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Erro ao criar eventos de dados: {e}")
+        logger.error(f"Erro ao criar eventos de dados: {e}")
         raise
 
 
 def populate_assets(count=50):
-    """Popular assets (simulados - sem arquivos reais)"""
-    print(f"🖼️  Criando {count} assets...")
+    logger.info(f"Criando {count} assets")
 
     try:
         assets = []
@@ -207,7 +211,7 @@ def populate_assets(count=50):
                 description=fake.text(max_nb_chars=150),
                 asset_type=asset_type,
                 file_name=filename,
-                file_size=random.randint(1024, 5 * 1024 * 1024),  # 1KB to 5MB
+                file_size=random.randint(1024, 5 * 1024 * 1024),
                 mime_type=f"image/{ext}" if asset_type == 'Image' else f"application/{ext}",
                 file_url=f"https://example.com/assets/{filename}",
                 category=random.choice(categories),
@@ -220,18 +224,17 @@ def populate_assets(count=50):
         db.session.bulk_save_objects(assets)
         db.session.commit()
 
-        print(f"✅ {len(assets)} assets criados com sucesso!")
+        logger.info(f"{len(assets)} assets criados com sucesso")
         return len(assets)
 
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Erro ao criar assets: {e}")
+        logger.error(f"Erro ao criar assets: {e}")
         raise
 
 
 def update_campaign_statistics():
-    """Atualizar estatísticas das campanhas baseado nos eventos"""
-    print("📈 Atualizando estatísticas das campanhas...")
+    logger.info("Atualizando estatísticas das campanhas")
 
     try:
         campaigns = Campaign.query.all()
@@ -253,45 +256,44 @@ def update_campaign_statistics():
             campaign.total_unsubscribes = unsubscribes
 
         db.session.commit()
-        print("✅ Estatísticas das campanhas atualizadas!")
+        logger.info("Estatísticas das campanhas atualizadas")
 
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Erro ao atualizar estatísticas: {e}")
+        logger.error(f"Erro ao atualizar estatísticas: {e}")
         raise
 
 
 def generate_sample_api_calls():
-    """Gerar exemplos de chamadas da API"""
-    print("\n🔧 Exemplos de uso da API:")
-    print("=" * 50)
+    logger.info("Gerando exemplos de uso da API")
+    logger.info("=" * 50)
 
     contact = Contact.query.first()
     campaign = Campaign.query.first()
     email_def = EmailDefinition.query.first()
 
-    print("\n1. Autenticação:")
-    print("POST /v1/auth/token")
-    print(json.dumps({
+    logger.info("1. Autenticação:")
+    logger.info("POST /v1/auth/token")
+    logger.info(json.dumps({
         "client_id": "marketing_cloud_app_1",
         "client_secret": "super_secret_key_123",
         "grant_type": "client_credentials"
     }, indent=2))
 
     if contact:
-        print(f"\n2. Buscar contato específico:")
-        print(f"GET /contacts/v1/contacts/{contact.contact_key}")
-        print("Headers: Authorization: Bearer <token>")
+        logger.info(f"2. Buscar contato específico:")
+        logger.info(f"GET /contacts/v1/contacts/{contact.contact_key}")
+        logger.info("Headers: Authorization: Bearer <token>")
 
-    print("\n3. Listar campanhas:")
-    print("GET /campaigns/v1/campaigns?page=1&per_page=10&status=Running")
-    print("Headers: Authorization: Bearer <token>")
+    logger.info("3. Listar campanhas:")
+    logger.info("GET /campaigns/v1/campaigns?page=1&per_page=10&status=Running")
+    logger.info("Headers: Authorization: Bearer <token>")
 
     if email_def:
-        print(f"\n4. Enviar email:")
-        print(f"POST /email/v1/definitions/{email_def.definition_key}/send")
-        print("Headers: Authorization: Bearer <token>")
-        print(json.dumps({
+        logger.info(f"4. Enviar email:")
+        logger.info(f"POST /email/v1/definitions/{email_def.definition_key}/send")
+        logger.info("Headers: Authorization: Bearer <token>")
+        logger.info(json.dumps({
             "recipients": [
                 {
                     "email": "teste@example.com",
@@ -301,10 +303,10 @@ def generate_sample_api_calls():
             ]
         }, indent=2))
 
-    print("\n5. Criar evento de dados:")
-    print("POST /data/v1/events")
-    print("Headers: Authorization: Bearer <token>")
-    print(json.dumps({
+    logger.info("5. Criar evento de dados:")
+    logger.info("POST /data/v1/events")
+    logger.info("Headers: Authorization: Bearer <token>")
+    logger.info(json.dumps({
         "eventType": "EmailOpen",
         "contactKey": contact.contact_key if contact else "example_contact",
         "eventData": {
@@ -315,51 +317,44 @@ def generate_sample_api_calls():
 
 
 def main():
-    """Função principal"""
-    print("🚀 Iniciando população do banco de dados da Marketing Cloud API")
-    print("=" * 60)
+    logger.info("Iniciando população do banco de dados da Marketing Cloud API")
+    logger.info("=" * 60)
 
-    # Verificar se deve limpar o banco
-    clear_db = input("🤔 Limpar banco de dados existente? (s/N): ").lower().strip()
+    clear_db = input("Limpar banco de dados existente? (s/N): ").lower().strip()
 
     with app.app_context():
-        # Criar tabelas se não existirem
-        print("🛠️  Criando tabelas do banco de dados...")
+        logger.info("Criando tabelas do banco de dados")
         db.create_all()
 
         if clear_db == 's':
             clear_database()
 
         try:
-            # Popular dados
             contact_count = populate_contacts(500)
             campaign_count = populate_campaigns(50)
             email_def_count = populate_email_definitions(100)
             event_count = populate_data_events(2000)
             asset_count = populate_assets(50)
 
-            # Atualizar estatísticas
             update_campaign_statistics()
 
-            # Resumo
-            print("\n🎉 População do banco concluída!")
-            print("=" * 40)
-            print(f"👥 Contatos: {contact_count}")
-            print(f"📧 Campanhas: {campaign_count}")
-            print(f"📝 Definições de Email: {email_def_count}")
-            print(f"📊 Eventos de Dados: {event_count}")
-            print(f"🖼️  Assets: {asset_count}")
-            print("=" * 40)
+            logger.info("População do banco concluída")
+            logger.info("=" * 40)
+            logger.info(f"Contatos: {contact_count}")
+            logger.info(f"Campanhas: {campaign_count}")
+            logger.info(f"Definições de Email: {email_def_count}")
+            logger.info(f"Eventos de Dados: {event_count}")
+            logger.info(f"Assets: {asset_count}")
+            logger.info("=" * 40)
 
-            # Gerar exemplos de API
             generate_sample_api_calls()
 
-            print(f"\n✨ API pronta para uso!")
-            print(f"🌐 Execute: python app.py")
-            print(f"📖 Documentação: http://localhost:5000/v1")
+            logger.info("API pronta para uso")
+            logger.info("Execute: python app.py")
+            logger.info("Documentação: http://localhost:5000/v1")
 
         except Exception as e:
-            print(f"\n💥 Erro durante a população: {e}")
+            logger.error(f"Erro durante a população: {e}")
             sys.exit(1)
 
 

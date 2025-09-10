@@ -43,7 +43,6 @@ limiter = Limiter(
     storage_uri=app.config['RATELIMIT_STORAGE_URL']
 )
 
-
 app.register_blueprint(auth_bp, url_prefix='/v1/auth')
 app.register_blueprint(contacts_bp, url_prefix='/contacts/v1')
 app.register_blueprint(campaigns_bp, url_prefix='/campaigns/v1')
