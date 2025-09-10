@@ -1,0 +1,19 @@
+[project]
+name = "salesforce-mock"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.16.5",
+    "faker>=37.6.0",
+    "flask>=3.1.2",
+    "flask-cors>=6.0.1",
+    "flask-limiter>=3.12",
+    "flask-restx==1.3.0",
+    "flask-sqlalchemy>=3.1.1",
+    "pandas>=2.3.2",
+    "psycopg[binary]>=3.2.10",
+    "pyjwt>=2.10.1",
+    "pytz>=2025.2",
+    "sqlalchemy>=2.0.43",
+]
