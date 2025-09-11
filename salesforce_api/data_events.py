@@ -65,11 +65,15 @@ def create_data_event():
 
         contact = Contact.query.filter_by(contact_key=contact_key).first()
         if not contact:
-            logger.warning(f"Event created for non-existent contact: {contact_key}")
+            return jsonify({
+                'error': 'Contact not found',
+                'message': f'Contact with key {contact_key} not found',
+                'errorcode': 404
+            }), 404
 
         event = DataEvent(
             event_type=event_type_enum,
-            contact_key=contact_key,
+            contact_id=contact.id,
             event_date=datetime.strptime(data.get('eventDate'), '%Y-%m-%dT%H:%M:%S') if data.get(
                 'eventDate') else datetime.utcnow(),
             source=data.get('source', 'API'),
@@ -156,9 +160,18 @@ def bulk_create_data_events():
                     })
                     continue
 
+                contact = Contact.query.filter_by(contact_key=contact_key).first()
+                if not contact:
+                    errors.append({
+                        'index': i,
+                        'error': f'Contact not found: {contact_key}',
+                        'data': event_data
+                    })
+                    continue
+
                 event = DataEvent(
                     event_type=event_type_enum,
-                    contact_key=contact_key,
+                    contact_id=contact.id,
                     event_date=datetime.strptime(event_data.get('eventDate'), '%Y-%m-%dT%H:%M:%S') if event_data.get(
                         'eventDate') else datetime.utcnow(),
                     source=event_data.get('source', 'API'),
@@ -263,7 +276,7 @@ def list_data_events():
             query = query.filter(DataEvent.event_type == DataEventType(event_type_filter))
 
         if contact_key_filter:
-            query = query.filter(DataEvent.contact_key == contact_key_filter)
+            query = query.join(Contact).filter(Contact.contact_key == contact_key_filter)
 
         if source_filter:
             query = query.filter(DataEvent.source == source_filter)
@@ -337,11 +350,19 @@ def get_contact_events(contact_key):
     """
 
     try:
+        contact = Contact.query.filter_by(contact_key=contact_key).first()
+        if not contact:
+            return jsonify({
+                'error': 'Contact not found',
+                'message': f'Contact with key {contact_key} not found',
+                'errorcode': 404
+            }), 404
+
         page = request.args.get('page', 1, type=int)
         per_page = min(request.args.get('per_page', 50, type=int), 100)
         event_type_filter = request.args.get('eventType')
 
-        query = DataEvent.query.filter_by(contact_key=contact_key)
+        query = DataEvent.query.filter_by(contact_id=contact.id)
 
         if event_type_filter:
             query = query.filter(DataEvent.event_type == DataEventType(event_type_filter))
@@ -359,7 +380,7 @@ def get_contact_events(contact_key):
         contact_stats = db.session.query(
             DataEvent.event_type,
             func.count(DataEvent.id).label('count')
-        ).filter_by(contact_key=contact_key).group_by(DataEvent.event_type).all()
+        ).filter_by(contact_id=contact.id).group_by(DataEvent.event_type).all()
 
         event_summary = {}
         for event_type, count in contact_stats:
@@ -460,12 +481,14 @@ def get_events_analytics():
             timeline[period_str][event_type.value] = count
 
         top_contacts = db.session.query(
-            DataEvent.contact_key,
+            Contact.contact_key,
             func.count(DataEvent.id).label('event_count')
+        ).join(
+            DataEvent, Contact.id == DataEvent.contact_id
         ).filter(
             query.whereclause if query.whereclause is not None else True
         ).group_by(
-            DataEvent.contact_key
+            Contact.contact_key
         ).order_by(
             func.count(DataEvent.id).desc()
         ).limit(10).all()
@@ -475,10 +498,16 @@ def get_events_analytics():
             for contact_key, count in top_contacts
         ]
 
+        unique_contacts_count = db.session.query(
+            func.count(func.distinct(DataEvent.contact_id))
+        ).filter(
+            query.whereclause if query.whereclause is not None else True
+        ).scalar()
+
         analytics = {
             'summary': {
                 'totalEvents': total_events,
-                'uniqueContacts': db.session.query(func.count(func.distinct(DataEvent.contact_key))).scalar(),
+                'uniqueContacts': unique_contacts_count,
                 'dateRange': {
                     'startDate': start_date,
                     'endDate': end_date
@@ -534,7 +563,7 @@ def analyze_event_funnel():
         campaign_id = data.get('campaignId')
 
         funnel_results = []
-        previous_contacts = None
+        previous_contact_ids = None
 
         for i, step in enumerate(steps):
             step_event_type = step.get('eventType')
@@ -547,7 +576,7 @@ def analyze_event_funnel():
                     'errorcode': 400
                 }), 400
 
-            query = db.session.query(func.distinct(DataEvent.contact_key))
+            query = db.session.query(func.distinct(DataEvent.contact_id))
             query = query.filter(DataEvent.event_type == DataEventType(step_event_type))
 
             if start_date:
@@ -561,16 +590,16 @@ def analyze_event_funnel():
             if campaign_id:
                 query = query.filter(DataEvent.campaign_id == campaign_id)
 
-            if previous_contacts is not None:
-                query = query.filter(DataEvent.contact_key.in_(previous_contacts))
+            if previous_contact_ids is not None:
+                query = query.filter(DataEvent.contact_id.in_(previous_contact_ids))
 
-            step_contacts = [row[0] for row in query.all()]
-            step_count = len(step_contacts)
+            step_contact_ids = [row[0] for row in query.all()]
+            step_count = len(step_contact_ids)
 
             if i == 0:
                 conversion_rate = 100.0
             else:
-                conversion_rate = (step_count / len(previous_contacts) * 100) if previous_contacts else 0
+                conversion_rate = (step_count / len(previous_contact_ids) * 100) if previous_contact_ids else 0
 
             funnel_results.append({
                 'stepNumber': i + 1,
@@ -581,7 +610,7 @@ def analyze_event_funnel():
                 'dropoffRate': round(100 - conversion_rate, 2) if i > 0 else 0
             })
 
-            previous_contacts = step_contacts
+            previous_contact_ids = step_contact_ids
 
         total_conversion = 0
         if funnel_results:

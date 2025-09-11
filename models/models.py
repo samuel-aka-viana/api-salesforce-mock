@@ -1,15 +1,10 @@
-"""
-Modelos de dados para Marketing Cloud API
-Utiliza SQLAlchemy e Faker para gerar dados simulados
-"""
-
-from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta
-from faker import Faker
 import json
 import uuid
-import random
+from datetime import datetime
 from enum import Enum
+
+from faker import Faker
+from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 fake = Faker(['pt_BR', 'en_US'])
@@ -48,6 +43,14 @@ class DataEventType(Enum):
     FORM_SUBMISSION = "FormSubmission"
 
 
+campaign_contacts = db.Table('campaign_contacts',
+                             db.Column('campaign_id', db.Integer, db.ForeignKey('campaigns.id'), primary_key=True),
+                             db.Column('contact_id', db.Integer, db.ForeignKey('contacts.id'), primary_key=True),
+                             db.Column('sent_date', db.DateTime, default=datetime.utcnow),
+                             db.Column('status', db.String(50), default='Sent')
+                             )
+
+
 class Contact(db.Model):
     __tablename__ = 'contacts'
 
@@ -84,6 +87,9 @@ class Contact(db.Model):
 
     custom_attributes = db.Column(db.Text)
 
+    data_events = db.relationship('DataEvent', backref='contact', lazy='dynamic', cascade='all, delete-orphan')
+    campaigns = db.relationship('Campaign', secondary=campaign_contacts, back_populates='contacts')
+
     def __init__(self, **kwargs):
         super(Contact, self).__init__(**kwargs)
         if not self.contact_key:
@@ -91,7 +97,7 @@ class Contact(db.Model):
         if not self.contact_id:
             self.contact_id = str(uuid.uuid4())
 
-    def to_dict(self):
+    def to_dict(self, include_relationships=False):
         """Converte o modelo para dicionário"""
         custom_attrs = {}
         if self.custom_attributes:
@@ -100,7 +106,7 @@ class Contact(db.Model):
             except:
                 pass
 
-        return {
+        result = {
             'contactKey': self.contact_key,
             'contactId': self.contact_id,
             'emailAddress': self.email_address,
@@ -127,79 +133,11 @@ class Contact(db.Model):
             'customAttributes': custom_attrs
         }
 
+        if include_relationships:
+            result['totalEvents'] = self.data_events.count()
+            result['activeCampaigns'] = len([c for c in self.campaigns if c.status == CampaignStatus.RUNNING])
 
-class Campaign(db.Model):
-    __tablename__ = 'campaigns'
-
-    id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.String(100), unique=True, nullable=False)
-    campaign_key = db.Column(db.String(100), unique=True, nullable=False)
-
-    name = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text)
-    campaign_type = db.Column(db.String(50))
-
-    status = db.Column(db.Enum(CampaignStatus), default=CampaignStatus.DRAFT)
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
-    modified_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    start_date = db.Column(db.DateTime)
-    end_date = db.Column(db.DateTime)
-
-    subject_line = db.Column(db.String(255))
-    from_name = db.Column(db.String(100))
-    from_email = db.Column(db.String(255))
-    reply_to_email = db.Column(db.String(255))
-
-    total_sent = db.Column(db.Integer, default=0)
-    total_opens = db.Column(db.Integer, default=0)
-    total_clicks = db.Column(db.Integer, default=0)
-    total_bounces = db.Column(db.Integer, default=0)
-    total_unsubscribes = db.Column(db.Integer, default=0)
-
-    tags = db.Column(db.Text)
-
-    def __init__(self, **kwargs):
-        super(Campaign, self).__init__(**kwargs)
-        if not self.campaign_id:
-            self.campaign_id = str(uuid.uuid4())
-        if not self.campaign_key:
-            self.campaign_key = str(uuid.uuid4())
-
-    def to_dict(self):
-        tags_list = []
-        if self.tags:
-            try:
-                tags_list = json.loads(self.tags)
-            except:
-                pass
-
-        return {
-            'campaignId': self.campaign_id,
-            'campaignKey': self.campaign_key,
-            'name': self.name,
-            'description': self.description,
-            'campaignType': self.campaign_type,
-            'status': self.status.value if self.status else None,
-            'createdDate': self.created_date.isoformat() if self.created_date else None,
-            'modifiedDate': self.modified_date.isoformat() if self.modified_date else None,
-            'startDate': self.start_date.isoformat() if self.start_date else None,
-            'endDate': self.end_date.isoformat() if self.end_date else None,
-            'subjectLine': self.subject_line,
-            'fromName': self.from_name,
-            'fromEmail': self.from_email,
-            'replyToEmail': self.reply_to_email,
-            'statistics': {
-                'totalSent': self.total_sent,
-                'totalOpens': self.total_opens,
-                'totalClicks': self.total_clicks,
-                'totalBounces': self.total_bounces,
-                'totalUnsubscribes': self.total_unsubscribes,
-                'openRate': round((self.total_opens / self.total_sent * 100), 2) if self.total_sent > 0 else 0,
-                'clickRate': round((self.total_clicks / self.total_sent * 100), 2) if self.total_sent > 0 else 0,
-                'bounceRate': round((self.total_bounces / self.total_sent * 100), 2) if self.total_sent > 0 else 0
-            },
-            'tags': tags_list
-        }
+        return result
 
 
 class EmailDefinition(db.Model):
@@ -229,6 +167,9 @@ class EmailDefinition(db.Model):
     track_opens = db.Column(db.Boolean, default=True)
     track_clicks = db.Column(db.Boolean, default=True)
 
+    campaigns = db.relationship('Campaign', backref='email_definition', lazy='dynamic')
+    data_events = db.relationship('DataEvent', backref='email_definition', lazy='dynamic')
+
     def __init__(self, **kwargs):
         super(EmailDefinition, self).__init__(**kwargs)
         if not self.definition_key:
@@ -236,8 +177,8 @@ class EmailDefinition(db.Model):
         if not self.definition_id:
             self.definition_id = str(uuid.uuid4())
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_relationships=False):
+        result = {
             'definitionKey': self.definition_key,
             'definitionId': self.definition_id,
             'name': self.name,
@@ -256,6 +197,112 @@ class EmailDefinition(db.Model):
             'trackClicks': self.track_clicks
         }
 
+        if include_relationships:
+            result['campaignCount'] = self.campaigns.count()
+            result['totalEvents'] = self.data_events.count()
+
+        return result
+
+
+class Campaign(db.Model):
+    __tablename__ = 'campaigns'
+
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.String(100), unique=True, nullable=False)
+    campaign_key = db.Column(db.String(100), unique=True, nullable=False)
+
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    campaign_type = db.Column(db.String(50))
+
+    status = db.Column(db.Enum(CampaignStatus), default=CampaignStatus.DRAFT)
+    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    modified_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    start_date = db.Column(db.DateTime)
+    end_date = db.Column(db.DateTime)
+
+    subject_line = db.Column(db.String(255))
+    from_name = db.Column(db.String(100))
+    from_email = db.Column(db.String(255))
+    reply_to_email = db.Column(db.String(255))
+
+    email_definition_id = db.Column(db.Integer, db.ForeignKey('email_definitions.id'), nullable=True)
+
+    contacts = db.relationship('Contact', secondary=campaign_contacts, back_populates='campaigns')
+    data_events = db.relationship('DataEvent', backref='campaign', lazy='dynamic')
+
+    tags = db.Column(db.Text)
+
+    def __init__(self, **kwargs):
+        super(Campaign, self).__init__(**kwargs)
+        if not self.campaign_id:
+            self.campaign_id = str(uuid.uuid4())
+        if not self.campaign_key:
+            self.campaign_key = str(uuid.uuid4())
+
+    @property
+    def total_sent(self):
+        return len(self.contacts)
+
+    @property
+    def total_opens(self):
+        return self.data_events.filter_by(event_type=DataEventType.EMAIL_OPEN).count()
+
+    @property
+    def total_clicks(self):
+        return self.data_events.filter_by(event_type=DataEventType.EMAIL_CLICK).count()
+
+    @property
+    def total_bounces(self):
+        return self.data_events.filter_by(event_type=DataEventType.EMAIL_BOUNCE).count()
+
+    @property
+    def total_unsubscribes(self):
+        return self.data_events.filter_by(event_type=DataEventType.EMAIL_UNSUBSCRIBE).count()
+
+    def to_dict(self, include_relationships=False):
+        tags_list = []
+        if self.tags:
+            try:
+                tags_list = json.loads(self.tags)
+            except:
+                pass
+
+        result = {
+            'campaignId': self.campaign_id,
+            'campaignKey': self.campaign_key,
+            'name': self.name,
+            'description': self.description,
+            'campaignType': self.campaign_type,
+            'status': self.status.value if self.status else None,
+            'createdDate': self.created_date.isoformat() if self.created_date else None,
+            'modifiedDate': self.modified_date.isoformat() if self.modified_date else None,
+            'startDate': self.start_date.isoformat() if self.start_date else None,
+            'endDate': self.end_date.isoformat() if self.end_date else None,
+            'subjectLine': self.subject_line,
+            'fromName': self.from_name,
+            'fromEmail': self.from_email,
+            'replyToEmail': self.reply_to_email,
+            'emailDefinitionId': self.email_definition_id,
+            'statistics': {
+                'totalSent': self.total_sent,
+                'totalOpens': self.total_opens,
+                'totalClicks': self.total_clicks,
+                'totalBounces': self.total_bounces,
+                'totalUnsubscribes': self.total_unsubscribes,
+                'openRate': round((self.total_opens / self.total_sent * 100), 2) if self.total_sent > 0 else 0,
+                'clickRate': round((self.total_clicks / self.total_sent * 100), 2) if self.total_sent > 0 else 0,
+                'bounceRate': round((self.total_bounces / self.total_sent * 100), 2) if self.total_sent > 0 else 0
+            },
+            'tags': tags_list
+        }
+
+        if include_relationships:
+            result['contactCount'] = len(self.contacts)
+            result['emailDefinition'] = self.email_definition.to_dict() if self.email_definition else None
+
+        return result
+
 
 class DataEvent(db.Model):
     __tablename__ = 'data_events'
@@ -264,22 +311,25 @@ class DataEvent(db.Model):
     event_id = db.Column(db.String(100), unique=True, nullable=False)
 
     event_type = db.Column(db.Enum(DataEventType), nullable=False)
-    contact_key = db.Column(db.String(100), nullable=False, index=True)
-
     event_date = db.Column(db.DateTime, default=datetime.utcnow)
     created_date = db.Column(db.DateTime, default=datetime.utcnow)
 
     event_data = db.Column(db.Text)
     source = db.Column(db.String(100))
-    campaign_id = db.Column(db.String(100))
-    email_definition_id = db.Column(db.String(100))
 
+    contact_id = db.Column(db.Integer, db.ForeignKey('contacts.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=True, index=True)
+    email_definition_id = db.Column(db.Integer, db.ForeignKey('email_definitions.id'), nullable=True, index=True)
+
+    @property
+    def contact_key(self):
+        return self.contact.contact_key if self.contact else None
     def __init__(self, **kwargs):
         super(DataEvent, self).__init__(**kwargs)
         if not self.event_id:
             self.event_id = str(uuid.uuid4())
 
-    def to_dict(self):
+    def to_dict(self, include_relationships=False):
         event_data = {}
         if self.event_data:
             try:
@@ -287,17 +337,24 @@ class DataEvent(db.Model):
             except:
                 pass
 
-        return {
+        result = {
             'eventId': self.event_id,
             'eventType': self.event_type.value if self.event_type else None,
-            'contactKey': self.contact_key,
             'eventDate': self.event_date.isoformat() if self.event_date else None,
             'createdDate': self.created_date.isoformat() if self.created_date else None,
             'eventData': event_data,
             'source': self.source,
+            'contactId': self.contact_id,
             'campaignId': self.campaign_id,
             'emailDefinitionId': self.email_definition_id
         }
+
+        if include_relationships:
+            result['contact'] = self.contact.to_dict() if self.contact else None
+            result['campaign'] = self.campaign.to_dict() if self.campaign else None
+            result['emailDefinition'] = self.email_definition.to_dict() if self.email_definition else None
+
+        return result
 
 
 class Asset(db.Model):
@@ -311,7 +368,6 @@ class Asset(db.Model):
     description = db.Column(db.Text)
     asset_type = db.Column(db.String(50))
 
-
     file_name = db.Column(db.String(255))
     file_size = db.Column(db.Integer)
     mime_type = db.Column(db.String(100))
@@ -323,6 +379,8 @@ class Asset(db.Model):
     tags = db.Column(db.Text)
     category = db.Column(db.String(100))
 
+    campaigns = db.relationship('Campaign', secondary='campaign_assets', backref='assets')
+
     def __init__(self, **kwargs):
         super(Asset, self).__init__(**kwargs)
         if not self.asset_id:
@@ -330,7 +388,7 @@ class Asset(db.Model):
         if not self.asset_key:
             self.asset_key = str(uuid.uuid4())
 
-    def to_dict(self):
+    def to_dict(self, include_relationships=False):
         tags_list = []
         if self.tags:
             try:
@@ -338,7 +396,7 @@ class Asset(db.Model):
             except:
                 pass
 
-        return {
+        result = {
             'assetId': self.asset_id,
             'assetKey': self.asset_key,
             'name': self.name,
@@ -354,114 +412,59 @@ class Asset(db.Model):
             'category': self.category
         }
 
+        if include_relationships:
+            result['usedInCampaigns'] = len(self.campaigns)
 
-def populate_fake_contacts(count=100):
-    """Popula o banco com contatos fake"""
-    contacts = []
-
-    for _ in range(count):
-        birth_date = fake.date_of_birth(minimum_age=18, maximum_age=80)
-        age = datetime.now().year - birth_date.year
-
-        contact = Contact(
-            email_address=fake.email(),
-            first_name=fake.first_name(),
-            last_name=fake.last_name(),
-            gender=random.choice(['Male', 'Female', 'Other']),
-            birth_date=birth_date,
-            age=age,
-            street_address=fake.street_address(),
-            city=fake.city(),
-            state=fake.state(),
-            postal_code=fake.postcode(),
-            country='Brazil',
-            phone_number=fake.phone_number(),
-            mobile_number=fake.phone_number(),
-            status=random.choice(list(ContactStatus)),
-            html_enabled=random.choice([True, False]),
-            email_opt_in=random.choice([True, True, True, False]),  # 75% opt-in
-            sms_opt_in=random.choice([True, False, False, False]),  # 25% opt-in
-            last_activity_date=fake.date_time_between(start_date='-30d', end_date='now'),
-            custom_attributes=json.dumps({
-                'segment': random.choice(['VIP', 'Premium', 'Regular', 'New']),
-                'interests': random.sample(['technology', 'sports', 'music', 'travel', 'food'], k=random.randint(1, 3)),
-                'purchase_history': random.randint(0, 50),
-                'lifetime_value': round(random.uniform(0, 5000), 2)
-            })
-        )
-        contact.full_name = f"{contact.first_name} {contact.last_name}"
-        contacts.append(contact)
-
-    db.session.bulk_save_objects(contacts)
-    db.session.commit()
-    return len(contacts)
+        return result
 
 
-def populate_fake_campaigns(count=20):
-    """Popula o banco com campanhas fake"""
-    campaigns = []
-
-    campaign_types = ['Email', 'SMS', 'Push Notification', 'Social Media']
-
-    for _ in range(count):
-        start_date = fake.date_time_between(start_date='-60d', end_date='+30d')
-        end_date = start_date + timedelta(days=random.randint(1, 30))
-
-        total_sent = random.randint(100, 10000)
-        total_opens = int(total_sent * random.uniform(0.15, 0.45))  # 15-45% open rate
-        total_clicks = int(total_opens * random.uniform(0.05, 0.25))  # 5-25% click rate
-        total_bounces = int(total_sent * random.uniform(0.01, 0.05))  # 1-5% bounce rate
-        total_unsubscribes = int(total_sent * random.uniform(0.001, 0.01))  # 0.1-1% unsubscribe rate
-
-        campaign = Campaign(
-            name=fake.catch_phrase(),
-            description=fake.text(max_nb_chars=200),
-            campaign_type=random.choice(campaign_types),
-            status=random.choice(list(CampaignStatus)),
-            start_date=start_date,
-            end_date=end_date,
-            subject_line=fake.sentence(nb_words=6),
-            from_name=fake.company(),
-            from_email=fake.company_email(),
-            reply_to_email=fake.company_email(),
-            total_sent=total_sent,
-            total_opens=total_opens,
-            total_clicks=total_clicks,
-            total_bounces=total_bounces,
-            total_unsubscribes=total_unsubscribes,
-            tags=json.dumps(random.sample(['promo', 'newsletter', 'announcement', 'seasonal', 'product-launch'],
-                                          k=random.randint(1, 3)))
-        )
-        campaigns.append(campaign)
-
-    db.session.bulk_save_objects(campaigns)
-    db.session.commit()
-    return len(campaigns)
+campaign_assets = db.Table('campaign_assets',
+                           db.Column('campaign_id', db.Integer, db.ForeignKey('campaigns.id'), primary_key=True),
+                           db.Column('asset_id', db.Integer, db.ForeignKey('assets.id'), primary_key=True),
+                           db.Column('usage_type', db.String(50), default='content'),
+                           db.Column('created_date', db.DateTime, default=datetime.utcnow)
+                           )
 
 
-def populate_fake_email_definitions(count=30):
-    """Popula o banco com definições de email fake"""
-    email_definitions = []
+class ContactService:
+    @staticmethod
+    def get_contact_activity_summary(contact_id):
+        contact = Contact.query.get(contact_id)
+        if not contact:
+            return None
 
-    email_types = ['Triggered', 'Transactional', 'Marketing', 'Welcome', 'Abandoned Cart']
+        events = contact.data_events.all()
+        campaigns = contact.campaigns
 
-    for _ in range(count):
-        email_def = EmailDefinition(
-            name=fake.sentence(nb_words=4),
-            description=fake.text(max_nb_chars=150),
-            subject=fake.sentence(nb_words=5),
-            html_content=f"<html><body><h1>{fake.sentence()}</h1><p>{fake.paragraph()}</p></body></html>",
-            text_content=fake.paragraph(),
-            status=random.choice(list(EmailStatus)),
-            email_type=random.choice(email_types),
-            from_name=fake.company(),
-            from_email=fake.company_email(),
-            reply_to_email=fake.company_email(),
-            track_opens=random.choice([True, False]),
-            track_clicks=random.choice([True, False])
-        )
-        email_definitions.append(email_def)
+        return {
+            'contact': contact.to_dict(),
+            'totalEvents': len(events),
+            'eventsByType': {
+                event_type.value: len([e for e in events if e.event_type == event_type])
+                for event_type in DataEventType
+            },
+            'activeCampaigns': len([c for c in campaigns if c.status == CampaignStatus.RUNNING]),
+            'totalCampaigns': len(campaigns),
+            'lastActivityDate': max([e.event_date for e in events]) if events else None
+        }
 
-    db.session.bulk_save_objects(email_definitions)
-    db.session.commit()
-    return len(email_definitions)
+    @staticmethod
+    def get_campaign_performance(campaign_id):
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return None
+
+        events = campaign.data_events.all()
+
+        return {
+            'campaign': campaign.to_dict(include_relationships=True),
+            'events': [e.to_dict() for e in events],
+            'performance': {
+                'deliveryRate': round((campaign.total_sent - campaign.total_bounces) / campaign.total_sent * 100,
+                                      2) if campaign.total_sent > 0 else 0,
+                'engagementRate': round((campaign.total_opens + campaign.total_clicks) / campaign.total_sent * 100,
+                                        2) if campaign.total_sent > 0 else 0,
+                'unsubscribeRate': round(campaign.total_unsubscribes / campaign.total_sent * 100,
+                                         2) if campaign.total_sent > 0 else 0
+            }
+        }

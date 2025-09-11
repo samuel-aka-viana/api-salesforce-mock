@@ -1,8 +1,9 @@
 import json
+import logging
 import os
 import random
 import sys
-import logging
+from datetime import datetime, timedelta
 
 from faker import Faker
 
@@ -11,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from app import app, db
 from models.models import (
     Contact, Campaign, EmailDefinition, DataEvent, DataEventType, Asset,
-    populate_fake_contacts, populate_fake_campaigns, populate_fake_email_definitions
+    ContactStatus, CampaignStatus, EmailStatus, campaign_contacts, campaign_assets
 )
 
 logging.basicConfig(
@@ -33,10 +34,12 @@ def clear_database():
     logger.info("Limpando banco de dados")
 
     try:
+        db.session.execute(campaign_assets.delete())
+        db.session.execute(campaign_contacts.delete())
         DataEvent.query.delete()
         Asset.query.delete()
-        EmailDefinition.query.delete()
         Campaign.query.delete()
+        EmailDefinition.query.delete()
         Contact.query.delete()
 
         db.session.commit()
@@ -49,64 +52,170 @@ def clear_database():
 
 
 def populate_contacts(count=500):
+    """Cria contatos com dados fake"""
     logger.info(f"Criando {count} contatos")
 
     try:
-        created = populate_fake_contacts(count)
-        logger.info(f"{created} contatos criados com sucesso")
-        return created
+        contacts = []
+
+        for _ in range(count):
+            birth_date = fake.date_of_birth(minimum_age=18, maximum_age=80)
+            age = datetime.now().year - birth_date.year
+            first_name = fake.first_name()
+            last_name = fake.last_name()
+
+            contact = Contact(
+                email_address=fake.email(),
+                first_name=first_name,
+                last_name=last_name,
+                full_name=f"{first_name} {last_name}",
+                gender=random.choice(['Male', 'Female', 'Other']),
+                birth_date=birth_date,
+                age=age,
+                street_address=fake.street_address(),
+                city=fake.city(),
+                state=fake.state(),
+                postal_code=fake.postcode(),
+                country='Brazil',
+                phone_number=fake.phone_number(),
+                mobile_number=fake.phone_number(),
+                status=random.choice(list(ContactStatus)),
+                html_enabled=random.choice([True, False]),
+                email_opt_in=random.choice([True, True, True, False]),  # 75% opt-in
+                sms_opt_in=random.choice([True, False, False, False]),  # 25% opt-in
+                last_activity_date=fake.date_time_between(start_date='-30d', end_date='now'),
+                custom_attributes=json.dumps({
+                    'segment': random.choice(['VIP', 'Premium', 'Regular', 'New']),
+                    'interests': random.sample(['technology', 'sports', 'music', 'travel', 'food'],
+                                               k=random.randint(1, 3)),
+                    'purchase_history': random.randint(0, 50),
+                    'lifetime_value': round(random.uniform(0, 5000), 2)
+                })
+            )
+            contacts.append(contact)
+
+        db.session.add_all(contacts)
+        db.session.commit()
+
+        logger.info(f"{len(contacts)} contatos criados com sucesso")
+        return contacts
+
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Erro ao criar contatos: {e}")
         raise
 
 
-def populate_campaigns(count=50):
-    logger.info(f"Criando {count} campanhas")
-
-    try:
-        created = populate_fake_campaigns(count)
-        logger.info(f"{created} campanhas criadas com sucesso")
-        return created
-    except Exception as e:
-        logger.error(f"Erro ao criar campanhas: {e}")
-        raise
-
-
 def populate_email_definitions(count=100):
+    """Cria definições de email"""
     logger.info(f"Criando {count} definições de email")
 
     try:
-        created = populate_fake_email_definitions(count)
-        logger.info(f"{created} definições de email criadas com sucesso")
-        return created
+        email_definitions = []
+        email_types = ['Triggered', 'Transactional', 'Marketing', 'Welcome', 'Abandoned Cart']
+
+        for _ in range(count):
+            subject = fake.sentence(nb_words=5)
+
+            email_def = EmailDefinition(
+                name=fake.sentence(nb_words=4),
+                description=fake.text(max_nb_chars=150),
+                subject=subject,
+                html_content=f"<html><body><h1>{subject}</h1><p>{fake.paragraph()}</p></body></html>",
+                text_content=fake.paragraph(),
+                status=random.choice(list(EmailStatus)),
+                email_type=random.choice(email_types),
+                from_name=fake.company(),
+                from_email=fake.company_email(),
+                reply_to_email=fake.company_email(),
+                track_opens=random.choice([True, False]),
+                track_clicks=random.choice([True, False])
+            )
+            email_definitions.append(email_def)
+
+        db.session.add_all(email_definitions)
+        db.session.commit()
+
+        logger.info(f"{len(email_definitions)} definições de email criadas com sucesso")
+        return email_definitions
+
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Erro ao criar definições de email: {e}")
         raise
 
 
-def populate_data_events(count=2000):
+def populate_campaigns(count=50, contacts=None, email_definitions=None):
+    """Cria campanhas e associa com contatos e definições de email"""
+    logger.info(f"Criando {count} campanhas")
+
+    try:
+        campaigns = []
+        campaign_types = ['Email', 'SMS', 'Push Notification', 'Social Media']
+
+        for _ in range(count):
+            start_date = fake.date_time_between(start_date='-60d', end_date='+30d')
+            end_date = start_date + timedelta(days=random.randint(1, 30))
+
+            email_def = random.choice(email_definitions) if email_definitions else None
+
+            campaign = Campaign(
+                name=fake.catch_phrase(),
+                description=fake.text(max_nb_chars=200),
+                campaign_type=random.choice(campaign_types),
+                status=random.choice(list(CampaignStatus)),
+                start_date=start_date,
+                end_date=end_date,
+                subject_line=fake.sentence(nb_words=6),
+                from_name=fake.company(),
+                from_email=fake.company_email(),
+                reply_to_email=fake.company_email(),
+                email_definition_id=email_def.id if email_def else None,
+                tags=json.dumps(random.sample(['promo', 'newsletter', 'announcement', 'seasonal', 'product-launch'],
+                                              k=random.randint(1, 3)))
+            )
+            campaigns.append(campaign)
+
+        db.session.add_all(campaigns)
+        db.session.commit()
+
+        if contacts:
+            logger.info("Associando contatos às campanhas")
+            for campaign in campaigns:
+                num_contacts = random.randint(len(contacts) // 10, len(contacts) // 2)
+                selected_contacts = random.sample(contacts, num_contacts)
+
+                for contact in selected_contacts:
+                    campaign.contacts.append(contact)
+
+            db.session.commit()
+
+        logger.info(f"{len(campaigns)} campanhas criadas com sucesso")
+        return campaigns
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Erro ao criar campanhas: {e}")
+        raise
+
+
+def populate_data_events(count=2000, contacts=None, campaigns=None, email_definitions=None):
+    """Cria eventos de dados com relacionamentos apropriados"""
     logger.info(f"Criando {count} eventos de dados")
 
     try:
-        contacts = Contact.query.all()
-        if not contacts:
-            logger.warning("Nenhum contato encontrado. Criando eventos sem contatos associados")
-            contact_keys = [f"contact_{i}" for i in range(100)]
-        else:
-            contact_keys = [c.contact_key for c in contacts]
-
-        campaigns = Campaign.query.all()
-        email_definitions = EmailDefinition.query.all()
-
-        campaign_ids = [c.campaign_id for c in campaigns] if campaigns else [None]
-        email_def_ids = [e.definition_id for e in email_definitions] if email_definitions else [None]
-
         events = []
         sources = ['Email', 'Website', 'Mobile App', 'SMS', 'API']
 
         for _ in range(count):
             event_type = random.choice(list(DataEventType))
-            contact_key = random.choice(contact_keys)
+
+            contact = random.choice(contacts) if contacts else None
+            campaign = random.choice(campaigns) if campaigns and random.random() > 0.3 else None
+            email_def = random.choice(email_definitions) if email_definitions and random.random() > 0.5 else None
+
+            if not contact:
+                continue
 
             event_data = {}
 
@@ -158,11 +267,11 @@ def populate_data_events(count=2000):
 
             event = DataEvent(
                 event_type=event_type,
-                contact_key=contact_key,
+                contact_id=contact.id,
+                campaign_id=campaign.id if campaign else None,
+                email_definition_id=email_def.id if email_def else None,
                 event_date=fake.date_time_between(start_date='-60d', end_date='now'),
                 source=random.choice(sources),
-                campaign_id=random.choice(campaign_ids) if random.random() > 0.3 else None,
-                email_definition_id=random.choice(email_def_ids) if random.random() > 0.5 else None,
                 event_data=json.dumps(event_data) if event_data else None
             )
 
@@ -171,12 +280,12 @@ def populate_data_events(count=2000):
         batch_size = 100
         for i in range(0, len(events), batch_size):
             batch = events[i:i + batch_size]
-            db.session.bulk_save_objects(batch)
+            db.session.add_all(batch)
             db.session.commit()
             logger.info(f"Inseridos {min(i + batch_size, len(events))}/{len(events)} eventos")
 
         logger.info(f"{len(events)} eventos de dados criados com sucesso")
-        return len(events)
+        return events
 
     except Exception as e:
         db.session.rollback()
@@ -184,7 +293,8 @@ def populate_data_events(count=2000):
         raise
 
 
-def populate_assets(count=50):
+def populate_assets(count=50, campaigns=None):
+    """Cria assets e associa com campanhas"""
     logger.info(f"Criando {count} assets")
 
     try:
@@ -221,11 +331,22 @@ def populate_assets(count=50):
 
             assets.append(asset)
 
-        db.session.bulk_save_objects(assets)
+        db.session.add_all(assets)
         db.session.commit()
 
+        if campaigns:
+            logger.info("Associando assets às campanhas")
+            for asset in assets:
+                num_campaigns = random.randint(0, min(3, len(campaigns)))
+                if num_campaigns > 0:
+                    selected_campaigns = random.sample(campaigns, num_campaigns)
+                    for campaign in selected_campaigns:
+                        asset.campaigns.append(campaign)
+
+            db.session.commit()
+
         logger.info(f"{len(assets)} assets criados com sucesso")
-        return len(assets)
+        return assets
 
     except Exception as e:
         db.session.rollback()
@@ -233,122 +354,74 @@ def populate_assets(count=50):
         raise
 
 
-def update_campaign_statistics():
-    logger.info("Atualizando estatísticas das campanhas")
-
-    try:
-        campaigns = Campaign.query.all()
-
-        for campaign in campaigns:
-            campaign_events = DataEvent.query.filter_by(campaign_id=campaign.campaign_id).all()
-
-            opens = sum(1 for e in campaign_events if e.event_type == DataEventType.EMAIL_OPEN)
-            clicks = sum(1 for e in campaign_events if e.event_type == DataEventType.EMAIL_CLICK)
-            bounces = sum(1 for e in campaign_events if e.event_type == DataEventType.EMAIL_BOUNCE)
-            unsubscribes = sum(1 for e in campaign_events if e.event_type == DataEventType.EMAIL_UNSUBSCRIBE)
-
-            if not campaign_events and campaign.total_sent == 0:
-                campaign.total_sent = random.randint(100, 5000)
-
-            campaign.total_opens = opens
-            campaign.total_clicks = clicks
-            campaign.total_bounces = bounces
-            campaign.total_unsubscribes = unsubscribes
-
-        db.session.commit()
-        logger.info("Estatísticas das campanhas atualizadas")
-
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Erro ao atualizar estatísticas: {e}")
-        raise
-
-
-def generate_sample_api_calls():
-    logger.info("Gerando exemplos de uso da API")
+def generate_sample_queries():
+    """Gera exemplos de consultas que aproveitam os relacionamentos"""
+    logger.info("Exemplos de consultas com relacionamentos:")
     logger.info("=" * 50)
 
     contact = Contact.query.first()
-    campaign = Campaign.query.first()
-    email_def = EmailDefinition.query.first()
-
-    logger.info("1. Autenticação:")
-    logger.info("POST /v1/auth/token")
-    logger.info(json.dumps({
-        "client_id": "marketing_cloud_app_1",
-        "client_secret": "super_secret_key_123",
-        "grant_type": "client_credentials"
-    }, indent=2))
-
     if contact:
-        logger.info(f"2. Buscar contato específico:")
-        logger.info(f"GET /contacts/v1/contacts/{contact.contact_key}")
-        logger.info("Headers: Authorization: Bearer <token>")
+        logger.info(f"1. Contato com relacionamentos:")
+        logger.info(f"   Contato: {contact.email_address}")
+        logger.info(f"   Total de eventos: {contact.data_events.count()}")
+        logger.info(f"   Campanhas ativas: {len([c for c in contact.campaigns if c.status == CampaignStatus.RUNNING])}")
 
-    logger.info("3. Listar campanhas:")
-    logger.info("GET /campaigns/v1/campaigns?page=1&per_page=10&status=Running")
-    logger.info("Headers: Authorization: Bearer <token>")
+    campaign = Campaign.query.first()
+    if campaign:
+        logger.info(f"2. Campanha com estatísticas:")
+        logger.info(f"   Campanha: {campaign.name}")
+        logger.info(f"   Total enviado: {campaign.total_sent}")
+        logger.info(f"   Total opens: {campaign.total_opens}")
+        logger.info(
+            f"   Taxa de abertura: {round(campaign.total_opens / campaign.total_sent * 100, 2) if campaign.total_sent > 0 else 0}%")
 
-    if email_def:
-        logger.info(f"4. Enviar email:")
-        logger.info(f"POST /email/v1/definitions/{email_def.definition_key}/send")
-        logger.info("Headers: Authorization: Bearer <token>")
-        logger.info(json.dumps({
-            "recipients": [
-                {
-                    "email": "teste@example.com",
-                    "firstName": "João",
-                    "lastName": "Silva"
-                }
-            ]
-        }, indent=2))
+    # Contatos mais ativos
+    logger.info("3. Consultas úteis:")
+    logger.info("   # Contatos mais ativos:")
+    logger.info(
+        "   Contact.query.join(DataEvent).group_by(Contact.id).order_by(func.count(DataEvent.id).desc()).limit(10)")
 
-    logger.info("5. Criar evento de dados:")
-    logger.info("POST /data/v1/events")
-    logger.info("Headers: Authorization: Bearer <token>")
-    logger.info(json.dumps({
-        "eventType": "EmailOpen",
-        "contactKey": contact.contact_key if contact else "example_contact",
-        "eventData": {
-            "userAgent": "Mozilla/5.0...",
-            "ipAddress": "192.168.1.1"
-        }
-    }, indent=2))
+    logger.info("   # Campanhas com melhor performance:")
+    logger.info(
+        "   Campaign.query.filter(Campaign.total_sent > 0).order_by((Campaign.total_opens / Campaign.total_sent).desc())")
+
+    logger.info("   # Eventos de um tipo específico:")
+    logger.info("   DataEvent.query.filter_by(event_type=DataEventType.EMAIL_OPEN).join(Contact).join(Campaign)")
 
 
 def main():
+    """Executa a população completa do banco com relacionamentos"""
     logger.info("Iniciando população do banco de dados da Marketing Cloud API")
+    logger.info("Versão com relacionamentos apropriados")
     logger.info("=" * 60)
-
 
     with app.app_context():
         logger.info("Criando tabelas do banco de dados")
         db.create_all()
-
-        if True:
-            clear_database()
+        clear_database()
 
         try:
-            contact_count = populate_contacts(5000)
-            campaign_count = populate_campaigns(500)
-            email_def_count = populate_email_definitions(1000)
-            event_count = populate_data_events(20000)
-            asset_count = populate_assets(500)
+            contacts = populate_contacts(5000)
+            email_definitions = populate_email_definitions(1000)
 
-            update_campaign_statistics()
+            campaigns = populate_campaigns(500, contacts, email_definitions)
 
-            logger.info("População do banco concluída")
+            events = populate_data_events(5000, contacts, campaigns, email_definitions)
+
+            assets = populate_assets(500, campaigns)
+
+            logger.info("População do banco concluída com relacionamentos")
             logger.info("=" * 40)
-            logger.info(f"Contatos: {contact_count}")
-            logger.info(f"Campanhas: {campaign_count}")
-            logger.info(f"Definições de Email: {email_def_count}")
-            logger.info(f"Eventos de Dados: {event_count}")
-            logger.info(f"Assets: {asset_count}")
+            logger.info(f"Contatos: {len(contacts)}")
+            logger.info(f"Campanhas: {len(campaigns)}")
+            logger.info(f"Definições de Email: {len(email_definitions)}")
+            logger.info(f"Eventos de Dados: {len(events)}")
+            logger.info(f"Assets: {len(assets)}")
             logger.info("=" * 40)
 
-            generate_sample_api_calls()
+            generate_sample_queries()
 
-            logger.info("API pronta para uso")
+            logger.info("API pronta para uso com relacionamentos apropriados")
             logger.info("Execute: python app.py")
             logger.info("Documentação: http://localhost:5000/v1")
 
